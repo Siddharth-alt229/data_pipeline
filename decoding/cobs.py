@@ -19,4 +19,6 @@ def cobs(packet):
 	packet.pop(length-1)
 	packet.pop(0)
 	packet.pop(0)
+	if(len(packet) < 13):
+		raise ValueError("Invalid packet")
 	return packet

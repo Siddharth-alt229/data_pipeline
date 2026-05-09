@@ -23,6 +23,17 @@ class data():
 		self.length = length
 
 window = deque(maxlen = 512)
+
+def resync():
+	try:
+		ind = window.index(0x00)
+		for i in range(ind):
+			window.popleft()
+		while (len(window) > 1 and window[0] == 0x00 and window[1] == 0x00):
+			window.popleft()
+	except ValueError:
+		window.clear()
+
 def get_packet(baud_rate = baud_rate, crc_key = integrity.crc_key):
 	while(ser.in_waiting > 0):
 		window.append(ser.read(1)[0])
@@ -32,22 +43,30 @@ def get_packet(baud_rate = baud_rate, crc_key = integrity.crc_key):
 		prov_packet = []
 		if(window[0] == 0x00 and window[1] != 0x00):
 			counter = 0
-			while(window[counter] != 0x00 or ((window[counter] == 0x00) and counter == 0)):
-				try:
-					prov_packet.append(window[counter])
-				except IndexError as e:
+			try:
+				while(window[counter] != 0x00 or ((window[counter] == 0x00) and counter == 0)):
+					try:
+						prov_packet.append(window[counter])
+					except IndexError as e:
+						window.popleft()
+						resync()
+						return {'packet': None, 'status': 2}
+					counter += 1
+				if(len(prov_packet)>4 and prov_packet[2] == 0xAA and prov_packet[3] == 0xFF):
+					try:
+						decoded_packet = cobs.cobs(prov_packet.copy())
+					except (IndexError, ValueError) as e:
+						window.popleft()
+						resync()
+						return {'packet': None, 'status': 2}
+				else:
 					window.popleft()
-					return {'packet': None, 'status': 2}
-				counter += 1
-			if(len(prov_packet)>4 and prov_packet[2] == 0xAA and prov_packet[3] == 0xFF):
-				try:
-					decoded_packet = cobs.cobs(prov_packet)
-				except IndexError as e:
-					window.popleft()
-					return {'packet': None, 'status': 2}
-			else:
+					resync()
+					return {'packet': None, 'status': 1}
+			except IndexError as e:
 				window.popleft()
-				return {'packet': None, 'status': 1}
+				resync()
+				return {'packet': None, 'status': 2}
 			received_crc_remainder = (decoded_packet[10] << 8) | decoded_packet[11]
 			recieved_checksum = decoded_packet[12]
 			calculated_sum = integrity.calc_checksum(decoded_packet, [10, 11, 12])
@@ -66,6 +85,7 @@ def get_packet(baud_rate = baud_rate, crc_key = integrity.crc_key):
 				return {'packet': packet, 'status': packet_stat}
 			else:
 				window.popleft()
+				resync()
 				packet_stat = 1
 				data.corrupted_packets += 1
 				return{'packet': packet, 'status': packet_stat}
